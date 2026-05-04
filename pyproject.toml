@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.24.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gymnasium_env"
+version = "0.1.0"
+description = "Educational custom Gymnasium environments and wrappers"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Gymnasium Learning Kit" }
+]
+dependencies = [
+  "gymnasium>=1.0.0",
+  "numpy>=1.26.0",
+  "pygame>=2.5.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0"
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.hatch.build.targets.wheel]
+packages = ["gymnasium_env"]
