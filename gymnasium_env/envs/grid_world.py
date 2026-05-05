@@ -12,6 +12,8 @@ from gymnasium import spaces
 
 TEXTURES_DIR = Path(__file__).parents[2] / "textures"
 
+n_agents = 3
+
 class Actions(IntEnum):
     RIGHT = 0
     UP = 1
@@ -40,6 +42,7 @@ class GridWorldEnv(gym.Env):
         chase_penalty: float = -0.1,
         approach_reward_weight: float = 0.12,
         revisit_penalty: float = -0.14,
+        max_steps: int = 200,
     ) -> None:
         self.size = size
         self.window_size = 768
@@ -58,6 +61,7 @@ class GridWorldEnv(gym.Env):
         self.approach_reward_weight = approach_reward_weight
         self.revisit_penalty = revisit_penalty
         self.goal_reward = 10.0
+        self.max_steps = max_steps
 
         self._start_location = np.array([self.size - 1, 0], dtype=int)
         self._target_anchor = np.array([0, self.size - 1], dtype=int)
@@ -80,7 +84,12 @@ class GridWorldEnv(gym.Env):
             Actions.DOWN.value: np.array([1, 0]),
         }
 
-        self._agent_location = np.array([-1, -1], dtype=int)
+        # self._agent_location = np.array([-1, -1], dtype=int)
+
+        self._agent_locations = [np.array([-1, -1], dtype=int) for _ in range(n_agents)]
+        self._done_agents = [False] * n_agents
+        self._finish_order = []
+
         self._target_location = np.array([-1, -1], dtype=int)
         self._tree_map = np.zeros((self.size, self.size), dtype=np.int8)
         self._bush_map = np.zeros((self.size, self.size), dtype=np.int8)
@@ -95,18 +104,18 @@ class GridWorldEnv(gym.Env):
         self.window = None
         self.clock = None
 
-    def _get_obs(self) -> dict[str, np.ndarray]:
+    def _get_obs(self, agent_idx: int) -> dict[str, np.ndarray]:
         return {
-            "agent": self._agent_location.copy(),
+            "agent": self._agent_locations[agent_idx].copy(),
             "target": self._target_location.copy(),
             "trees": self._tree_map.copy(),
             "bushes": self._bush_map.copy(),
         }
 
-    def _get_info(self) -> dict[str, float]:
+    def _get_info(self, agent_idx: int) -> dict[str, float]:
         return {
             "distance": float(
-                np.linalg.norm(self._agent_location - self._target_location, ord=1)
+                np.linalg.norm(self._agent_locations[agent_idx] - self._target_location, ord=1)
             ),
             "chase_radius": float(self._chase_radius),
             "chase_active": float(self._step_count >= self.chase_activation_step),
@@ -184,70 +193,93 @@ class GridWorldEnv(gym.Env):
     ) -> tuple[dict[str, np.ndarray], dict[str, float]]:
         super().reset(seed=seed)
 
-        self._agent_location = self._start_location.copy()
+        # self._agent_location = self._start_location.copy()
+        self._agent_locations = [self._start_location.copy() for _ in range(n_agents)]
+        self._done_agents = [False] * n_agents
+        self._finish_order = []
         self._target_location = self._target_anchor.copy()
         self._build_terrain()
         self._chase_center = self._chase_origin.copy()
         self._chase_radius = 0.0
         self._step_count = 0
-        self._visited_locations = {tuple(self._agent_location)}
+        self._visited_locations = {tuple(self._agent_locations[i]) for i in range(n_agents)}
 
-        observation = self._get_obs()
-        info = self._get_info()
+        observations = [self._get_obs(i) for i in range(n_agents)]
+        infos = [self._get_info(i) for i in range(n_agents)]
 
         if self.render_mode == "human":
             self._render_frame()
 
-        return observation, info
+        return observations, infos
 
-    def step(
-        self, action: int
-    ) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, float]]:
+    def step(self, actions: list[int]) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, float]]:
         self._step_count += 1
-
-        previous_distance = float(
-            np.linalg.norm(self._agent_location - self._target_location, ord=1)
-        )
-
-        direction = self._action_to_direction[action]
-        proposed_location = np.clip(self._agent_location + direction, 0, self.size - 1)
-
-        reward = self.step_penalty
-        if self._tree_map[tuple(proposed_location)] == 1:
-            proposed_location = self._agent_location.copy()
-            reward += self.tree_penalty
-        else:
-            self._agent_location = proposed_location
-            if self._bush_map[tuple(self._agent_location)] == 1:
-                reward += self.bush_penalty
-
-        agent_location_key = tuple(self._agent_location)
-        if agent_location_key in self._visited_locations:
-            reward += self.revisit_penalty
-        else:
-            self._visited_locations.add(agent_location_key)
-
-        current_distance = float(
-            np.linalg.norm(self._agent_location - self._target_location, ord=1)
-        )
-        distance_progress = previous_distance - current_distance
-        reward += self.approach_reward_weight * distance_progress
-
         self._update_chase_zone()
-        if self._step_count >= self.chase_activation_step and self._is_inside_chase_zone(self._agent_location):
-            reward += self.chase_penalty
 
-        terminated = bool(np.array_equal(self._agent_location, self._target_location))
-        if terminated:
-            reward = self.goal_reward
+        observations = []
+        rewards = []
+        terminateds = []
+        infos = []
+        for i, action in enumerate(actions):
+            if self._done_agents[i]:
+                observations.append(self._get_obs(i))
+                rewards.append(0.0)
+                terminateds.append(True)
+                infos.append(self._get_info(i))
+                continue
 
-        observation = self._get_obs()
-        info = self._get_info()
+            previous_distance = float(
+                np.linalg.norm(self._agent_locations[i] - self._target_location, ord=1)
+            )
+
+            direction = self._action_to_direction[action]
+            proposed_location = np.clip(self._agent_locations[i] + direction, 0, self.size - 1)
+
+            reward = self.step_penalty
+            if self._tree_map[tuple(proposed_location)] == 1:
+                proposed_location = self._agent_locations[i].copy()
+                reward += self.tree_penalty
+            else:
+                self._agent_locations[i] = proposed_location
+                if self._bush_map[tuple(self._agent_locations[i])] == 1:
+                    reward += self.bush_penalty
+
+            agent_location_key = tuple(self._agent_locations[i])
+            if agent_location_key in self._visited_locations:
+                reward += self.revisit_penalty
+            else:
+                self._visited_locations.add(agent_location_key)
+
+            current_distance = float(
+                np.linalg.norm(self._agent_locations[i] - self._target_location, ord=1)
+            )
+            distance_progress = previous_distance - current_distance
+            reward += self.approach_reward_weight * distance_progress
+
+            if self._step_count >= self.chase_activation_step and self._is_inside_chase_zone(self._agent_locations[i]):
+                reward += self.chase_penalty
+
+            terminated = bool(np.array_equal(self._agent_locations[i], self._target_location))
+            if terminated:
+                reward = self.goal_reward
+                self._done_agents[i] = True
+                self._finish_order.append(i)
+
+            observation = self._get_obs(i)    
+            info = self._get_info(i)
+
+            observations.append(observation)
+            rewards.append(reward)
+            terminateds.append(terminated)
+            infos.append(info)
+
+        all_done = all(self._done_agents)
+        any_truncated = self._step_count >= self.max_steps
 
         if self.render_mode == "human":
             self._render_frame()
 
-        return observation, reward, terminated, False, info
+        return observations, rewards, terminateds, any_truncated, infos
 
     def render(self) -> np.ndarray | None:
         if self.render_mode == "rgb_array":
@@ -358,12 +390,22 @@ class GridWorldEnv(gym.Env):
             pix_square_size * self._target_location[::-1],
         )
 
-        pygame.draw.circle(
-            canvas,
-            (0, 0, 255),
-            (self._agent_location[::-1] + 0.5) * pix_square_size,
-            pix_square_size / 3,
-        )
+        # pygame.draw.circle(
+        #     canvas,
+        #     (0, 0, 255),
+        #     (self._agent_location[::-1] + 0.5) * pix_square_size,
+        #     pix_square_size / 3,
+        # )
+
+        colors = [(0, 0, 255), (255, 0, 0), (0, 255, 0)]
+        for i, loc in enumerate(self._agent_locations):
+            if not self._done_agents[i]:
+                pygame.draw.circle(
+                    canvas,
+                    colors[i % len(colors)],
+                    (loc[::-1] + 0.5) * pix_square_size,
+                    pix_square_size / 3,
+                )
 
         for x in range(self.size + 1):
             pygame.draw.line(

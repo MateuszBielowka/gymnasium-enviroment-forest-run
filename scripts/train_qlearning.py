@@ -2,6 +2,8 @@ from collections import defaultdict
 from pathlib import Path
 import sys
 
+from gymnasium_env.envs.grid_world import GridWorldEnv
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -64,72 +66,156 @@ def make_train_env(size: int = 5) -> gym.Env:
     return gym.make("gymnasium_env/GridWorld-v0", size=size)
 
 
-def train(
+# def train(
+#     size: int = 5,
+#     episodes: int = 5000,
+#     alpha: float = 0.15,
+#     gamma: float = 0.98,
+#     epsilon_start: float = 1.0,
+#     epsilon_end: float = 0.05,
+#     epsilon_decay: float = 0.995,
+# ):
+#     env = make_train_env(size=size)
+#     rng = np.random.default_rng(123)
+
+#     q_table = defaultdict(lambda: np.full(env.action_space.n, 0.1, dtype=float))
+
+#     epsilon = epsilon_start
+
+#     for episode in range(episodes):
+#         obs, _ = env.reset(seed=episode)
+#         base_env = env.unwrapped
+#         state = to_state(obs, base_env)
+
+#         done = False
+#         while not done:
+#             action = epsilon_greedy(q_table[state], epsilon=epsilon, rng=rng)
+#             next_obs, reward, terminated, truncated, _ = env.step(action)
+#             next_state = to_state(next_obs, base_env)
+
+#             td_target = reward + gamma * np.max(q_table[next_state]) * (0.0 if terminated else 1.0)
+#             td_error = td_target - q_table[state][action]
+#             q_table[state][action] += alpha * td_error
+
+#             state = next_state
+#             done = terminated or truncated
+
+#         epsilon = max(epsilon_end, epsilon * epsilon_decay)
+
+#         if (episode + 1) % 100 == 0:
+#             print(f"Episode {episode + 1}/{episodes} epsilon={epsilon:.3f}")
+
+#     env.close()
+#     return q_table
+
+
+def train_multi(
     size: int = 5,
     episodes: int = 5000,
-    alpha: float = 0.15,
-    gamma: float = 0.98,
-    epsilon_start: float = 1.0,
-    epsilon_end: float = 0.05,
-    epsilon_decay: float = 0.995,
+    agent_configs: list[dict] | None = None,
 ):
-    env = make_train_env(size=size)
+    if agent_configs is None:
+        agent_configs = [
+            {"alpha": 0.15, "gamma": 0.98, "epsilon_decay": 0.995},
+            {"alpha": 0.10, "gamma": 0.95, "epsilon_decay": 0.990},
+            {"alpha": 0.20, "gamma": 0.99, "epsilon_decay": 0.998},
+        ]
+
+    n = len(agent_configs)
+    env = GridWorldEnv(size=size)
     rng = np.random.default_rng(123)
 
-    q_table = defaultdict(lambda: np.full(env.action_space.n, 0.1, dtype=float))
-
-    epsilon = epsilon_start
+    q_tables = [
+        defaultdict(lambda: np.full(4, 0.1, dtype=float))
+        for _ in range(n)
+    ]
+    epsilons = [1.0] * n
 
     for episode in range(episodes):
-        obs, _ = env.reset(seed=episode)
+        obs_list, _ = env.reset(seed=episode)
         base_env = env.unwrapped
-        state = to_state(obs, base_env)
+        states = [to_state(obs_list[i], base_env) for i in range(n)]
 
         done = False
         while not done:
-            action = epsilon_greedy(q_table[state], epsilon=epsilon, rng=rng)
-            next_obs, reward, terminated, truncated, _ = env.step(action)
-            next_state = to_state(next_obs, base_env)
+            actions = [
+                epsilon_greedy(q_tables[i][states[i]], epsilons[i], rng)
+                for i in range(n)
+            ]
+            next_obs_list, rewards, terminateds, truncated, _ = env.step(actions)
+            next_states = [to_state(next_obs_list[i], base_env) for i in range(n)]
 
-            td_target = reward + gamma * np.max(q_table[next_state]) * (0.0 if terminated else 1.0)
-            td_error = td_target - q_table[state][action]
-            q_table[state][action] += alpha * td_error
+            for i in range(n):
+                cfg = agent_configs[i]
+                td_target = (
+                    rewards[i] + cfg["gamma"] * np.max(q_tables[i][next_states[i]])
+                    * (0.0 if terminateds[i] else 1.0)
+                )
+                td_error = td_target - q_tables[i][states[i]][actions[i]]
+                q_tables[i][states[i]][actions[i]] += cfg["alpha"] * td_error
 
-            state = next_state
-            done = terminated or truncated
+            states = next_states
+            done = all(terminateds) or truncated
 
-        epsilon = max(epsilon_end, epsilon * epsilon_decay)
+        for i in range(n):
+            epsilons[i] = max(0.05, epsilons[i] * agent_configs[i]["epsilon_decay"])
 
         if (episode + 1) % 100 == 0:
-            print(f"Episode {episode + 1}/{episodes} epsilon={epsilon:.3f}")
+            print(f"Episode {episode + 1}/{episodes} epsilons={[f'{e:.3f}' for e in epsilons]}")
 
     env.close()
-    return q_table
+    return q_tables
 
 
-def evaluate(q_table, size: int = 5, episodes: int = 20):
-    env = gym.make("gymnasium_env/GridWorld-v0", render_mode=None, size=size)
-    wins = 0
+# def evaluate(q_table, size: int = 5, episodes: int = 20):
+#     env = gym.make("gymnasium_env/GridWorld-v0", render_mode=None, size=size)
+#     wins = 0
+
+#     for episode in range(episodes):
+#         obs, _ = env.reset(seed=10_000 + episode)
+#         base_env = env.unwrapped
+#         state = to_state(obs, base_env)
+
+#         for _ in range(100):
+#             action = int(np.argmax(q_table[state]))
+#             obs, reward, terminated, truncated, _ = env.step(action)
+#             state = to_state(obs, base_env)
+#             if terminated:
+#                 wins += 1
+#                 break
+#             if truncated:
+#                 break
+
+#     env.close()
+#     print(f"Skutecznosc: {wins}/{episodes} = {wins / episodes:.2%}")
+
+
+def evaluate_multi(q_tables, size: int = 5, episodes: int = 20):
+    from gymnasium_env.envs.grid_world import GridWorldEnv, n_agents
+    env = GridWorldEnv(size=size)
+    wins_per_agent = [0] * n_agents
 
     for episode in range(episodes):
-        obs, _ = env.reset(seed=10_000 + episode)
-        base_env = env.unwrapped
-        state = to_state(obs, base_env)
+        obs_list, _ = env.reset(seed=10_000 + episode)
 
-        for _ in range(100):
-            action = int(np.argmax(q_table[state]))
-            obs, reward, terminated, truncated, _ = env.step(action)
-            state = to_state(obs, base_env)
-            if terminated:
-                wins += 1
-                break
-            if truncated:
+        for _ in range(200):
+            prev_done = env._done_agents[:]
+            states = [to_state(obs_list[i], env) for i in range(n_agents)]
+            actions = [int(np.argmax(q_tables[i][states[i]])) for i in range(n_agents)]
+            obs_list, rewards, terminateds, truncated, _ = env.step(actions)
+
+            for i in range(n_agents):
+                if terminateds[i] and not prev_done[i]:
+                    wins_per_agent[i] += 1
+
+            if all(terminateds) or truncated:
                 break
 
     env.close()
-    print(f"Skutecznosc: {wins}/{episodes} = {wins / episodes:.2%}")
+    for i in range(n_agents):
+        print(f"Agent {i}: {wins_per_agent[i]}/{episodes} = {wins_per_agent[i]/episodes:.2%}")
 
 
 if __name__ == "__main__":
-    q = train()
-    evaluate(q)
+    qs = train_multi()
+    evaluate_multi(qs)
