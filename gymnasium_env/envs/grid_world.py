@@ -1,4 +1,5 @@
 from __future__ import annotations
+from pathlib import Path
 
 from enum import IntEnum
 from typing import Any
@@ -8,6 +9,8 @@ import numpy as np
 import pygame
 from gymnasium import spaces
 
+
+TEXTURES_DIR = Path(__file__).parents[2] / "textures"
 
 class Actions(IntEnum):
     RIGHT = 0
@@ -39,7 +42,7 @@ class GridWorldEnv(gym.Env):
         revisit_penalty: float = -0.14,
     ) -> None:
         self.size = size
-        self.window_size = 512
+        self.window_size = 768
         self.tree_count = tree_count
         self.bush_count = bush_count
         self.tree_density = tree_density
@@ -257,6 +260,20 @@ class GridWorldEnv(gym.Env):
             pygame.display.init()
             self.window = pygame.display.set_mode((self.window_size, self.window_size))
 
+            cell_size = int(self.window_size / self.size)
+            self._tree_icon = pygame.transform.scale(
+                pygame.image.load(TEXTURES_DIR / "tree.png").convert_alpha(),
+                (cell_size, cell_size),
+            )
+            self._bush_icon = pygame.transform.scale(
+                pygame.image.load(TEXTURES_DIR / "bush.png").convert_alpha(),
+                (cell_size, cell_size),
+            )
+            self._goal_icon = pygame.transform.scale(
+                pygame.image.load(TEXTURES_DIR / "house.png").convert_alpha(),
+                (cell_size, cell_size),
+            )
+
         if self.clock is None and self.render_mode == "human":
             self.clock = pygame.time.Clock()
 
@@ -270,46 +287,75 @@ class GridWorldEnv(gym.Env):
             chase_radius = max(1, int(self._chase_radius * pix_square_size))
             pygame.draw.circle(
                 chase_overlay,
-                (255, 120, 0, 70),
+                # (255, 120, 0, 70),
+                # (255, 255, 255, 70),
+                (200, 210, 220, 55),
                 chase_center,
                 chase_radius,
             )
+
             pygame.draw.circle(
                 chase_overlay,
-                (255, 90, 0, 180),
+                (180, 190, 200, 90),
+                chase_center,
+                int(chase_radius * 0.6),
+            )
+
+            pygame.draw.circle(
+                chase_overlay,
+                # (255, 90, 0, 180),
+                # (255, 255, 255, 180),
+                (220, 225, 230, 130),
                 chase_center,
                 chase_radius,
                 width=4,
             )
             canvas.blit(chase_overlay, (0, 0))
 
+        # for row, column in np.argwhere(self._bush_map == 1):
+        #     pygame.draw.rect(
+        #         canvas,
+        #         (112, 173, 71),
+        #         pygame.Rect(
+        #             pix_square_size * np.array([column, row]),
+        #             (pix_square_size, pix_square_size),
+        #         ),
+        #     )
+
+        # for row, column in np.argwhere(self._tree_map == 1):
+        #     pygame.draw.rect(
+        #         canvas,
+        #         (64, 93, 37),
+        #         pygame.Rect(
+        #             pix_square_size * np.array([column, row]),
+        #             (pix_square_size, pix_square_size),
+        #         ),
+        #     )
+
         for row, column in np.argwhere(self._bush_map == 1):
-            pygame.draw.rect(
-                canvas,
-                (112, 173, 71),
-                pygame.Rect(
-                    pix_square_size * np.array([column, row]),
-                    (pix_square_size, pix_square_size),
-                ),
+            canvas.blit(
+                self._bush_icon,
+                (pix_square_size * column, pix_square_size * row),
             )
 
         for row, column in np.argwhere(self._tree_map == 1):
-            pygame.draw.rect(
-                canvas,
-                (64, 93, 37),
-                pygame.Rect(
-                    pix_square_size * np.array([column, row]),
-                    (pix_square_size, pix_square_size),
-                ),
+            canvas.blit(
+                self._tree_icon,
+                (pix_square_size * column, pix_square_size * row),
             )
 
-        pygame.draw.rect(
-            canvas,
-            (255, 0, 0),
-            pygame.Rect(
-                pix_square_size * self._target_location[::-1],
-                (pix_square_size, pix_square_size),
-            ),
+        # pygame.draw.rect(
+        #     canvas,
+        #     (255, 0, 0),
+        #     pygame.Rect(
+        #         pix_square_size * self._target_location[::-1],
+        #         (pix_square_size, pix_square_size),
+        #     ),
+        # )
+
+        canvas.blit(
+            self._goal_icon,
+            pix_square_size * self._target_location[::-1],
         )
 
         pygame.draw.circle(
@@ -325,14 +371,14 @@ class GridWorldEnv(gym.Env):
                 0,
                 (0, pix_square_size * x),
                 (self.window_size, pix_square_size * x),
-                width=3,
+                width=2,
             )
             pygame.draw.line(
                 canvas,
                 0,
                 (pix_square_size * x, 0),
                 (pix_square_size * x, self.window_size),
-                width=3,
+                width=2,
             )
 
         if self.render_mode == "human":
