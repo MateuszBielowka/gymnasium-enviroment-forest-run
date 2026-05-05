@@ -107,7 +107,7 @@ def run_trained_episode(
     max_steps: int = 200,
     tree_count: int | None = None,
     bush_count: int | None = None,
-    train_episodes: int = 1500,
+    train_episodes: int = 8000,
 ) -> None:
     from scripts.train_qlearning import train_multi
     q_tables = train_multi(size=size, episodes=train_episodes)

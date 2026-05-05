@@ -23,36 +23,117 @@ def _cell_type(base_env, row: int, column: int) -> int:
     return 0
 
 
+# def to_state(obs: dict[str, np.ndarray], base_env) -> tuple[int, ...]:
+#     agent_row, agent_column = (int(value) for value in obs["agent"])
+#     target_row, target_column = (int(value) for value in obs["target"])
+
+#     relative_row = target_row - agent_row
+#     relative_column = target_column - agent_column
+
+#     local_features = (
+#         _cell_type(base_env, agent_row - 1, agent_column),
+#         _cell_type(base_env, agent_row, agent_column + 1),
+#         _cell_type(base_env, agent_row + 1, agent_column),
+#         _cell_type(base_env, agent_row, agent_column - 1),
+#     )
+
+#     chase_active = int(base_env._step_count >= base_env.chase_activation_step)
+#     chase_radius = int(round(base_env._chase_radius))
+#     chase_distance = int(
+#         np.linalg.norm(np.array([agent_row, agent_column]) - base_env._chase_center, ord=2)
+#     )
+
+#     current_cell = _cell_type(base_env, agent_row, agent_column)
+
+#     return (
+#         relative_row,
+#         relative_column,
+#         *local_features,
+#         current_cell,
+#         chase_active,
+#         chase_radius,
+#         chase_distance,
+#     )
+
+# def to_state(obs: dict[str, np.ndarray], base_env) -> tuple[int, ...]:
+#     agent_row, agent_column = (int(value) for value in obs["agent"])
+#     target_row, target_column = (int(value) for value in obs["target"])
+
+#     relative_row = target_row - agent_row
+#     relative_column = target_column - agent_column
+
+#     r, c = agent_row, agent_column
+
+#     ring_features = (
+#         _cell_type(base_env, r - 1, c),      # N
+#         _cell_type(base_env, r - 1, c + 1),  # NE
+#         _cell_type(base_env, r,     c + 1),  # E
+#         _cell_type(base_env, r + 1, c + 1),  # SE
+#         _cell_type(base_env, r + 1, c),      # S
+#         _cell_type(base_env, r + 1, c - 1),  # SW
+#         _cell_type(base_env, r,     c - 1),  # W
+#         _cell_type(base_env, r - 1, c - 1),  # NW
+#     )
+
+#     far_features = (
+#         _cell_type(base_env, r - 2, c),  # N2
+#         _cell_type(base_env, r,     c + 2),  # E2
+#         _cell_type(base_env, r + 2, c),  # S2
+#         _cell_type(base_env, r,     c - 2),  # W2
+#     )
+
+#     local_features = ring_features + far_features
+
+#     chase_active = int(base_env._step_count >= base_env.chase_activation_step)
+#     chase_radius = int(round(base_env._chase_radius))
+#     # chase_distance = int(
+#     #     np.linalg.norm(np.array([r, c]) - base_env._chase_center, ord=2)
+#     # )
+#     dist_to_center = float(np.linalg.norm(np.array([r, c]) - base_env._chase_center, ord=2))
+#     chase_distance_to_edge = int(np.clip(
+#         round(dist_to_center - base_env._chase_radius), -5, 10
+#     ))
+
+#     current_cell = _cell_type(base_env, r, c)
+
+#     return (
+#         relative_row,
+#         relative_column,
+#         *local_features,
+#         current_cell,
+#         chase_active,
+#         chase_radius,
+#         chase_distance_to_edge
+#     )
+
+
 def to_state(obs: dict[str, np.ndarray], base_env) -> tuple[int, ...]:
     agent_row, agent_column = (int(value) for value in obs["agent"])
     target_row, target_column = (int(value) for value in obs["target"])
 
-    relative_row = target_row - agent_row
-    relative_column = target_column - agent_column
+    # KIERUNEK do celu (zwraca -1, 0, 1), a nie dokładna odległość!
+    dir_row = int(np.sign(target_row - agent_row))
+    dir_col = int(np.sign(target_column - agent_column))
 
+    r, c = agent_row, agent_column
+
+    # Tylko 4 bezpośrednio przyległe pola (środowisko ma 4 akcje ruchu)
     local_features = (
-        _cell_type(base_env, agent_row - 1, agent_column),
-        _cell_type(base_env, agent_row, agent_column + 1),
-        _cell_type(base_env, agent_row + 1, agent_column),
-        _cell_type(base_env, agent_row, agent_column - 1),
+        _cell_type(base_env, r - 1, c),  # N
+        _cell_type(base_env, r,     c + 1),  # E
+        _cell_type(base_env, r + 1, c),  # S
+        _cell_type(base_env, r,     c - 1),  # W
     )
 
     chase_active = int(base_env._step_count >= base_env.chase_activation_step)
-    chase_radius = int(round(base_env._chase_radius))
-    chase_distance = int(
-        np.linalg.norm(np.array([agent_row, agent_column]) - base_env._chase_center, ord=2)
-    )
-
-    current_cell = _cell_type(base_env, agent_row, agent_column)
+    dist_to_center = float(np.linalg.norm(np.array([r, c]) - base_env._chase_center, ord=2))
+    in_danger = int(chase_active and dist_to_center <= base_env._chase_radius + 2)
 
     return (
-        relative_row,
-        relative_column,
+        dir_row,
+        dir_col,
         *local_features,
-        current_cell,
-        chase_active,
-        chase_radius,
-        chase_distance,
+        in_danger
     )
 
 
@@ -111,7 +192,7 @@ def make_train_env(size: int = 5) -> gym.Env:
 
 def train_multi(
     size: int = 5,
-    episodes: int = 5000,
+    episodes: int = 8000,
     agent_configs: list[dict] | None = None,
 ):
     if agent_configs is None:

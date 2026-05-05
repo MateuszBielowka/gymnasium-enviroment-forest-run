@@ -32,16 +32,16 @@ class GridWorldEnv(gym.Env):
         bush_count: int | None = None,
         tree_density: float = 0.12,
         bush_density: float = 0.08,
-        step_penalty: float = -0.01,
-        tree_penalty: float = -0.15,
+        step_penalty: float = -0.1,
+        tree_penalty: float = -1.0,
         bush_penalty: float = -0.2,
         chase_activation_step: int = 8,
         chase_growth_interval: int = 4,
         chase_growth_rate: float = 1.0,
         chase_speed: int = 1,
-        chase_penalty: float = -0.1,
-        approach_reward_weight: float = 0.12,
-        revisit_penalty: float = -0.14,
+        chase_penalty: float = -1.0,
+        approach_reward_weight: float = 1.0,
+        revisit_penalty: float = -0.1,
         max_steps: int = 200,
     ) -> None:
         self.size = size
@@ -60,7 +60,7 @@ class GridWorldEnv(gym.Env):
         self.chase_penalty = chase_penalty
         self.approach_reward_weight = approach_reward_weight
         self.revisit_penalty = revisit_penalty
-        self.goal_reward = 10.0
+        self.goal_reward = 100.0
         self.max_steps = max_steps
 
         self._start_location = np.array([self.size - 1, 0], dtype=int)
@@ -256,8 +256,20 @@ class GridWorldEnv(gym.Env):
             distance_progress = previous_distance - current_distance
             reward += self.approach_reward_weight * distance_progress
 
-            if self._step_count >= self.chase_activation_step and self._is_inside_chase_zone(self._agent_locations[i]):
-                reward += self.chase_penalty
+            # if self._step_count >= self.chase_activation_step and self._is_inside_chase_zone(self._agent_locations[i]):
+            #     reward += self.chase_penalty
+
+            if self._step_count >= self.chase_activation_step:
+                dist_to_center = float(np.linalg.norm(
+                    self._agent_locations[i] - self._chase_center, ord=2
+                ))
+                if dist_to_center <= self._chase_radius:
+                    # w strefie — pełna kara
+                    reward += self.chase_penalty
+                elif dist_to_center <= self._chase_radius + 3:
+                    # strefa zagrożenia 3 komórki przed granicą — kara proporcjonalna
+                    proximity = (self._chase_radius + 3 - dist_to_center) / 3
+                    reward += self.chase_penalty * proximity * 0.4
 
             terminated = bool(np.array_equal(self._agent_locations[i], self._target_location))
             if terminated:
