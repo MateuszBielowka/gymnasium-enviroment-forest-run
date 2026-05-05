@@ -19,14 +19,53 @@ class Actions(IntEnum):
 class GridWorldEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 4}
 
-    def __init__(self, render_mode: str | None = None, size: int = 5) -> None:
+    def __init__(
+        self,
+        render_mode: str | None = None,
+        size: int = 5,
+        tree_count: int | None = None,
+        bush_count: int | None = None,
+        tree_density: float = 0.12,
+        bush_density: float = 0.08,
+        step_penalty: float = -0.01,
+        tree_penalty: float = -0.15,
+        bush_penalty: float = -0.2,
+        chase_activation_step: int = 8,
+        chase_growth_interval: int = 4,
+        chase_growth_rate: float = 1.0,
+        chase_speed: int = 1,
+        chase_penalty: float = -0.1,
+        approach_reward_weight: float = 0.12,
+        revisit_penalty: float = -0.14,
+    ) -> None:
         self.size = size
         self.window_size = 512
+        self.tree_count = tree_count
+        self.bush_count = bush_count
+        self.tree_density = tree_density
+        self.bush_density = bush_density
+        self.step_penalty = step_penalty
+        self.tree_penalty = tree_penalty
+        self.bush_penalty = bush_penalty
+        self.chase_activation_step = chase_activation_step
+        self.chase_growth_interval = chase_growth_interval
+        self.chase_growth_rate = chase_growth_rate
+        self.chase_speed = chase_speed
+        self.chase_penalty = chase_penalty
+        self.approach_reward_weight = approach_reward_weight
+        self.revisit_penalty = revisit_penalty
+        self.goal_reward = 10.0
+
+        self._start_location = np.array([self.size - 1, 0], dtype=int)
+        self._target_anchor = np.array([0, self.size - 1], dtype=int)
+        self._chase_origin = self._start_location.copy()
 
         self.observation_space = spaces.Dict(
             {
                 "agent": spaces.Box(0, size - 1, shape=(2,), dtype=int),
                 "target": spaces.Box(0, size - 1, shape=(2,), dtype=int),
+                "trees": spaces.Box(0, 1, shape=(size, size), dtype=np.int8),
+                "bushes": spaces.Box(0, 1, shape=(size, size), dtype=np.int8),
             }
         )
         self.action_space = spaces.Discrete(4)
@@ -40,6 +79,12 @@ class GridWorldEnv(gym.Env):
 
         self._agent_location = np.array([-1, -1], dtype=int)
         self._target_location = np.array([-1, -1], dtype=int)
+        self._tree_map = np.zeros((self.size, self.size), dtype=np.int8)
+        self._bush_map = np.zeros((self.size, self.size), dtype=np.int8)
+        self._chase_center = self._chase_origin.copy()
+        self._chase_radius = 0.0
+        self._step_count = 0
+        self._visited_locations: set[tuple[int, int]] = set()
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
@@ -51,27 +96,98 @@ class GridWorldEnv(gym.Env):
         return {
             "agent": self._agent_location.copy(),
             "target": self._target_location.copy(),
+            "trees": self._tree_map.copy(),
+            "bushes": self._bush_map.copy(),
         }
 
     def _get_info(self) -> dict[str, float]:
         return {
             "distance": float(
                 np.linalg.norm(self._agent_location - self._target_location, ord=1)
-            )
+            ),
+            "chase_radius": float(self._chase_radius),
+            "chase_active": float(self._step_count >= self.chase_activation_step),
         }
+
+    def _is_inside_chase_zone(self, location: np.ndarray) -> bool:
+        return float(np.linalg.norm(location - self._chase_center, ord=2)) <= self._chase_radius
+
+    def _update_chase_zone(self) -> None:
+        if self._step_count < self.chase_activation_step:
+            return
+
+        steps_since_activation = self._step_count - self.chase_activation_step + 1
+        if steps_since_activation > 0 and steps_since_activation % self.chase_growth_interval == 0:
+            self._chase_radius += self.chase_growth_rate
+
+    def _build_terrain(self) -> None:
+        self._tree_map.fill(0)
+        self._bush_map.fill(0)
+
+        available_cells = [
+            (row, column)
+            for row in range(self.size)
+            for column in range(self.size)
+            if not np.array_equal((row, column), self._start_location)
+            and not np.array_equal((row, column), self._target_location)
+        ]
+        if not available_cells:
+            return
+
+        available_cells_array = np.array(available_cells, dtype=int)
+        remaining_cells = len(available_cells)
+
+        tree_count = self.tree_count
+        if tree_count is None:
+            tree_count = int(round(self.size * self.size * self.tree_density))
+        tree_count = int(np.clip(tree_count, 0, remaining_cells))
+
+        tree_indices = (
+            self.np_random.choice(remaining_cells, size=tree_count, replace=False)
+            if tree_count > 0
+            else np.array([], dtype=int)
+        )
+        tree_cells = available_cells_array[tree_indices]
+
+        for row, column in tree_cells:
+            self._tree_map[row, column] = 1
+
+        remaining_cells = [
+            (row, column)
+            for row, column in available_cells
+            if self._tree_map[row, column] == 0
+        ]
+        if not remaining_cells:
+            return
+
+        remaining_cells_array = np.array(remaining_cells, dtype=int)
+        bush_count = self.bush_count
+        if bush_count is None:
+            bush_count = int(round(self.size * self.size * self.bush_density))
+        bush_count = int(np.clip(bush_count, 0, len(remaining_cells)))
+
+        bush_indices = (
+            self.np_random.choice(len(remaining_cells), size=bush_count, replace=False)
+            if bush_count > 0
+            else np.array([], dtype=int)
+        )
+        bush_cells = remaining_cells_array[bush_indices]
+
+        for row, column in bush_cells:
+            self._bush_map[row, column] = 1
 
     def reset(
         self, seed: int | None = None, options: dict[str, Any] | None = None
     ) -> tuple[dict[str, np.ndarray], dict[str, float]]:
         super().reset(seed=seed)
 
-        self._agent_location = self.np_random.integers(0, self.size, size=2, dtype=int)
-
-        self._target_location = self._agent_location
-        while np.array_equal(self._target_location, self._agent_location):
-            self._target_location = self.np_random.integers(
-                0, self.size, size=2, dtype=int
-            )
+        self._agent_location = self._start_location.copy()
+        self._target_location = self._target_anchor.copy()
+        self._build_terrain()
+        self._chase_center = self._chase_origin.copy()
+        self._chase_radius = 0.0
+        self._step_count = 0
+        self._visited_locations = {tuple(self._agent_location)}
 
         observation = self._get_obs()
         info = self._get_info()
@@ -84,11 +200,43 @@ class GridWorldEnv(gym.Env):
     def step(
         self, action: int
     ) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, float]]:
+        self._step_count += 1
+
+        previous_distance = float(
+            np.linalg.norm(self._agent_location - self._target_location, ord=1)
+        )
+
         direction = self._action_to_direction[action]
-        self._agent_location = np.clip(self._agent_location + direction, 0, self.size - 1)
+        proposed_location = np.clip(self._agent_location + direction, 0, self.size - 1)
+
+        reward = self.step_penalty
+        if self._tree_map[tuple(proposed_location)] == 1:
+            proposed_location = self._agent_location.copy()
+            reward += self.tree_penalty
+        else:
+            self._agent_location = proposed_location
+            if self._bush_map[tuple(self._agent_location)] == 1:
+                reward += self.bush_penalty
+
+        agent_location_key = tuple(self._agent_location)
+        if agent_location_key in self._visited_locations:
+            reward += self.revisit_penalty
+        else:
+            self._visited_locations.add(agent_location_key)
+
+        current_distance = float(
+            np.linalg.norm(self._agent_location - self._target_location, ord=1)
+        )
+        distance_progress = previous_distance - current_distance
+        reward += self.approach_reward_weight * distance_progress
+
+        self._update_chase_zone()
+        if self._step_count >= self.chase_activation_step and self._is_inside_chase_zone(self._agent_location):
+            reward += self.chase_penalty
 
         terminated = bool(np.array_equal(self._agent_location, self._target_location))
-        reward = 1.0 if terminated else 0.0
+        if terminated:
+            reward = self.goal_reward
 
         observation = self._get_obs()
         info = self._get_info()
@@ -115,6 +263,45 @@ class GridWorldEnv(gym.Env):
         canvas = pygame.Surface((self.window_size, self.window_size))
         canvas.fill((30, 150, 65))
         pix_square_size = self.window_size / self.size
+
+        if self._step_count >= self.chase_activation_step:
+            chase_overlay = pygame.Surface((self.window_size, self.window_size), pygame.SRCALPHA)
+            chase_center = ((self._chase_center[::-1] + 0.5) * pix_square_size).astype(int)
+            chase_radius = max(1, int(self._chase_radius * pix_square_size))
+            pygame.draw.circle(
+                chase_overlay,
+                (255, 120, 0, 70),
+                chase_center,
+                chase_radius,
+            )
+            pygame.draw.circle(
+                chase_overlay,
+                (255, 90, 0, 180),
+                chase_center,
+                chase_radius,
+                width=4,
+            )
+            canvas.blit(chase_overlay, (0, 0))
+
+        for row, column in np.argwhere(self._bush_map == 1):
+            pygame.draw.rect(
+                canvas,
+                (112, 173, 71),
+                pygame.Rect(
+                    pix_square_size * np.array([column, row]),
+                    (pix_square_size, pix_square_size),
+                ),
+            )
+
+        for row, column in np.argwhere(self._tree_map == 1):
+            pygame.draw.rect(
+                canvas,
+                (64, 93, 37),
+                pygame.Rect(
+                    pix_square_size * np.array([column, row]),
+                    (pix_square_size, pix_square_size),
+                ),
+            )
 
         pygame.draw.rect(
             canvas,

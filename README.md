@@ -6,6 +6,8 @@ Ten projekt zawiera:
 - przykladowe skrypty,
 - testy
 
+W aktualnej wersji gry agent startuje w lewym dolnym rogu, a celem jest prawy gorny rog. Na mapie losowo pojawiaja sie nieprzechodnie drzewa oraz krzewy, ktore zabieraja punkty przy wejściu.
+
 ## 1. Szybki start
 
 ```bash
