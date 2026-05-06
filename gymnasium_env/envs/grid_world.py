@@ -302,6 +302,7 @@ class GridWorldEnv(gym.Env):
         if self.window is None and self.render_mode == "human":
             pygame.init()
             pygame.display.init()
+            pygame.font.init()
             self.window = pygame.display.set_mode((self.window_size, self.window_size))
 
             cell_size = int(self.window_size / self.size)
@@ -412,12 +413,16 @@ class GridWorldEnv(gym.Env):
         colors = [(0, 0, 255), (255, 0, 0), (0, 255, 0)]
         for i, loc in enumerate(self._agent_locations):
             if not self._done_agents[i]:
-                pygame.draw.circle(
-                    canvas,
-                    colors[i % len(colors)],
-                    (loc[::-1] + 0.5) * pix_square_size,
-                    pix_square_size / 3,
-                )
+                center = (loc[::-1] + 0.5) * pix_square_size
+                pygame.draw.circle(canvas, colors[i % len(colors)], center, pix_square_size / 3)
+
+                if not hasattr(self, '_font'):
+                    self._font = pygame.font.SysFont(None, int(pix_square_size * 0.5))
+                label = self._font.render(str(i + 1), True, (255, 255, 255))
+                canvas.blit(label, (
+                    center[0] - label.get_width() // 2,
+                    center[1] - label.get_height() // 2,
+                ))
 
         for x in range(self.size + 1):
             pygame.draw.line(
