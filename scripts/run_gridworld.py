@@ -1,4 +1,5 @@
 import time
+import argparse
 from pathlib import Path
 import sys
 
@@ -7,13 +8,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from gymnasium_env.envs.grid_world import GridWorldEnv, n_agents
-from scripts.train_qlearning import to_state
+from scripts.train_qlearning import DEFAULT_MODEL_PATH, load_q_tables, to_state
 import numpy as np
 
 
 def run_random_episode(
     render_mode: str = "human",
-    size: int = 15,
+    size: int = 30,
     max_steps: int = 80,
     tree_count: int = 24,
     bush_count: int = 16,
@@ -55,63 +56,14 @@ def run_random_episode(
     env.close()
 
 
-# def run_trained_episode(
-#     render_mode: str = "human",
-#     size: int = 30,
-#     max_steps: int = 200,
-#     tree_count: int | None = None,
-#     bush_count: int | None = None,
-#     train_episodes: int = 1500,
-# ) -> None:
-#     q_table = train(size=size, episodes=train_episodes)
-#     env = GridWorldEnv(
-#         render_mode=render_mode,
-#         size=size,
-#         tree_count=tree_count,
-#         bush_count=bush_count,
-#     )
-#     obs_list, infos = env.reset(seed=42)
-
-#     terrain_trees = int(obs_list[0]["trees"].sum())
-#     terrain_bushes = int(obs_list[0]["bushes"].sum())
-#     print("START TRAINED RUN")
-#     print("obs:", obs_list[0])
-#     print("info:", infos[0])
-#     print(
-#         f"start={obs_list[0]['agent'].tolist()} goal={obs_list[0]['target'].tolist()} trees={terrain_trees} bushes={terrain_bushes}"
-#     )
-
-#     total_reward = 0.0
-#     for step in range(max_steps):
-#         state = to_state(obs_list[0], env)
-#         action = int(np.argmax(q_table[state]))
-#         obs, reward, terminated, truncated, info = env.step(action)
-#         total_reward += reward
-
-#         print(
-#             f"step={step:02d} action={action} reward={reward:.2f} terminated={terminated} truncated={truncated} distance={info['distance']:.1f}"
-#         )
-
-#         if terminated or truncated:
-#             break
-
-#         if render_mode == "human":
-#             time.sleep(0.15)
-
-#     print("SUMA NAGROD:", total_reward)
-#     env.close()
-
 def run_trained_episode(
+    q_tables,
     render_mode: str = "human",
     size: int = 30,
     max_steps: int = 200,
     tree_count: int | None = None,
     bush_count: int | None = None,
-    train_episodes: int = 8000,
 ) -> None:
-    from scripts.train_qlearning import train_multi
-    q_tables = train_multi(size=size, episodes=train_episodes)
-
     env = GridWorldEnv(
         render_mode=render_mode,
         size=size,
@@ -145,4 +97,23 @@ def run_trained_episode(
 
 
 if __name__ == "__main__":
-    run_trained_episode()
+    parser = argparse.ArgumentParser(description="Run GridWorld using a saved Q-learning model.")
+    parser.add_argument(
+        "--model",
+        type=Path,
+        default=DEFAULT_MODEL_PATH,
+        help="Path to the saved Q-learning model.",
+    )
+    parser.add_argument("--size", type=int, default=None, help="Override grid size used for the run.")
+    parser.add_argument("--render-mode", type=str, default="human", help="Gymnasium render mode.")
+    parser.add_argument("--max-steps", type=int, default=200, help="Maximum number of steps to run.")
+    args = parser.parse_args()
+
+    q_tables, payload = load_q_tables(args.model)
+    run_size = args.size if args.size is not None else int(payload["size"])
+    run_trained_episode(
+        q_tables,
+        render_mode=args.render_mode,
+        size=run_size,
+        max_steps=args.max_steps,
+    )

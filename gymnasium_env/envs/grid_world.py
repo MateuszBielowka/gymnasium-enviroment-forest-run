@@ -27,7 +27,7 @@ class GridWorldEnv(gym.Env):
     def __init__(
         self,
         render_mode: str | None = None,
-        size: int = 5,
+        size: int = 30,
         tree_count: int | None = None,
         bush_count: int | None = None,
         tree_density: float = 0.12,

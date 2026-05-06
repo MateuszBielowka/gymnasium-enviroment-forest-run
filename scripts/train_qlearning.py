@@ -1,8 +1,8 @@
 from collections import defaultdict
+import argparse
+import pickle
 from pathlib import Path
 import sys
-
-from gymnasium_env.envs.grid_world import GridWorldEnv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -11,6 +11,17 @@ if str(PROJECT_ROOT) not in sys.path:
 import gymnasium_env
 import gymnasium as gym
 import numpy as np
+from gymnasium_env.envs.grid_world import GridWorldEnv
+
+DEFAULT_MODEL_PATH = PROJECT_ROOT / "models" / "gridworld_q_tables.pkl"
+
+
+def default_q_row() -> np.ndarray:
+    return np.full(4, 0.1, dtype=float)
+
+
+def make_q_table() -> defaultdict[tuple[int, ...], np.ndarray]:
+    return defaultdict(default_q_row)
 
 
 def _cell_type(base_env, row: int, column: int) -> int:
@@ -143,7 +154,7 @@ def epsilon_greedy(q_values: np.ndarray, epsilon: float, rng: np.random.Generato
     return int(np.argmax(q_values))
 
 
-def make_train_env(size: int = 5) -> gym.Env:
+def make_train_env(size: int = 30) -> gym.Env:
     return gym.make("gymnasium_env/GridWorld-v0", size=size)
 
 
@@ -191,7 +202,7 @@ def make_train_env(size: int = 5) -> gym.Env:
 
 
 def train_multi(
-    size: int = 5,
+    size: int = 30,
     episodes: int = 8000,
     agent_configs: list[dict] | None = None,
 ):
@@ -206,10 +217,7 @@ def train_multi(
     env = GridWorldEnv(size=size)
     rng = np.random.default_rng(123)
 
-    q_tables = [
-        defaultdict(lambda: np.full(4, 0.1, dtype=float))
-        for _ in range(n)
-    ]
+    q_tables = [make_q_table() for _ in range(n)]
     epsilons = [1.0] * n
 
     for episode in range(episodes):
@@ -248,6 +256,34 @@ def train_multi(
     return q_tables
 
 
+def save_q_tables(
+    path: Path,
+    q_tables,
+    *,
+    size: int,
+    agent_configs: list[dict],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "size": size,
+        "agent_configs": agent_configs,
+        "q_tables": [dict(q_table) for q_table in q_tables],
+    }
+    with path.open("wb") as file:
+        pickle.dump(payload, file)
+
+
+def load_q_tables(path: Path):
+    with path.open("rb") as file:
+        payload = pickle.load(file)
+
+    q_tables = [make_q_table() for _ in payload["q_tables"]]
+    for index, table_data in enumerate(payload["q_tables"]):
+        q_tables[index].update(table_data)
+
+    return q_tables, payload
+
+
 # def evaluate(q_table, size: int = 5, episodes: int = 20):
 #     env = gym.make("gymnasium_env/GridWorld-v0", render_mode=None, size=size)
 #     wins = 0
@@ -271,7 +307,7 @@ def train_multi(
 #     print(f"Skutecznosc: {wins}/{episodes} = {wins / episodes:.2%}")
 
 
-def evaluate_multi(q_tables, size: int = 5, episodes: int = 20):
+def evaluate_multi(q_tables, size: int = 30, episodes: int = 20):
     from gymnasium_env.envs.grid_world import GridWorldEnv, n_agents
     env = GridWorldEnv(size=size)
     wins_per_agent = [0] * n_agents
@@ -298,5 +334,27 @@ def evaluate_multi(q_tables, size: int = 5, episodes: int = 20):
 
 
 if __name__ == "__main__":
-    qs = train_multi()
-    evaluate_multi(qs)
+    parser = argparse.ArgumentParser(description="Train Q-learning agents for GridWorld.")
+    parser.add_argument("--size", type=int, default=30, help="Grid size used during training.")
+    parser.add_argument("--episodes", type=int, default=8000, help="Number of training episodes.")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_MODEL_PATH,
+        help="Where to save the trained model.",
+    )
+    parser.add_argument("--evaluate", action="store_true", help="Evaluate after training.")
+    args = parser.parse_args()
+
+    agent_configs = [
+        {"alpha": 0.15, "gamma": 0.98, "epsilon_decay": 0.995},
+        {"alpha": 0.10, "gamma": 0.95, "epsilon_decay": 0.990},
+        {"alpha": 0.20, "gamma": 0.99, "epsilon_decay": 0.998},
+    ]
+
+    q_tables = train_multi(size=args.size, episodes=args.episodes, agent_configs=agent_configs)
+    save_q_tables(args.output, q_tables, size=args.size, agent_configs=agent_configs)
+    print(f"Saved trained model to {args.output}")
+
+    if args.evaluate:
+        evaluate_multi(q_tables, size=args.size)
