@@ -82,9 +82,7 @@ def run_trained_episode(
         for i in range(n_agents):
             total_rewards[i] += rewards[i]
 
-        print(f"step={step:02d} " + " | ".join(
-            f"a{i} r={rewards[i]:.2f} done={terminateds[i]}" for i in range(n_agents)
-        ))
+        print(f"step={step:02d} " + " | ".join(f"a{i} r={rewards[i]:.2f} done={terminateds[i]}" for i in range(n_agents)))
 
         if all(terminateds) or truncated:
             break

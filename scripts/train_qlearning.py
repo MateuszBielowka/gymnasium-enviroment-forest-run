@@ -122,13 +122,11 @@ def to_state(obs: dict[str, np.ndarray], base_env) -> tuple[int, ...]:
     agent_row, agent_column = (int(value) for value in obs["agent"])
     target_row, target_column = (int(value) for value in obs["target"])
 
-    # KIERUNEK do celu (zwraca -1, 0, 1), a nie dokładna odległość!
     dir_row = int(np.sign(target_row - agent_row))
     dir_col = int(np.sign(target_column - agent_column))
 
     r, c = agent_row, agent_column
 
-    # Tylko 4 bezpośrednio przyległe pola (środowisko ma 4 akcje ruchu)
     local_features = (
         _cell_type(base_env, r - 1, c),  # N
         _cell_type(base_env, r,     c + 1),  # E
@@ -236,10 +234,7 @@ def train_multi(
 
             for i in range(n):
                 cfg = agent_configs[i]
-                td_target = (
-                    rewards[i] + cfg["gamma"] * np.max(q_tables[i][next_states[i]])
-                    * (0.0 if terminateds[i] else 1.0)
-                )
+                td_target = rewards[i] + cfg["gamma"] * np.max(q_tables[i][next_states[i]]) * (0.0 if terminateds[i] else 1.0)
                 td_error = td_target - q_tables[i][states[i]][actions[i]]
                 q_tables[i][states[i]][actions[i]] += cfg["alpha"] * td_error
 

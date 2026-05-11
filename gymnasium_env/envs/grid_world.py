@@ -228,9 +228,7 @@ class GridWorldEnv(gym.Env):
                 infos.append(self._get_info(i))
                 continue
 
-            previous_distance = float(
-                np.linalg.norm(self._agent_locations[i] - self._target_location, ord=1)
-            )
+            previous_distance = float(np.linalg.norm(self._agent_locations[i] - self._target_location, ord=1))
 
             direction = self._action_to_direction[action]
             proposed_location = np.clip(self._agent_locations[i] + direction, 0, self.size - 1)
@@ -250,9 +248,7 @@ class GridWorldEnv(gym.Env):
             else:
                 self._visited_locations.add(agent_location_key)
 
-            current_distance = float(
-                np.linalg.norm(self._agent_locations[i] - self._target_location, ord=1)
-            )
+            current_distance = float(np.linalg.norm(self._agent_locations[i] - self._target_location, ord=1))
             distance_progress = previous_distance - current_distance
             reward += self.approach_reward_weight * distance_progress
 
